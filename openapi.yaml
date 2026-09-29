@@ -1,0 +1,967 @@
+openapi: 3.0.3
+info:
+  title: 海鲜预制菜工厂 批次解冻加工与召回服务
+  version: 1.0.0
+  description: >
+    覆盖虾仁/扇贝/鱿鱼/鱼柳冻品的采购入库、仓储温控、解冻、加工工序、成品冷库、留样检测、
+    渠道定制包装发货、已售订单、渠道反馈、质量事件、监管抽样、精准召回、退货三态处置
+    （可复检/可返工/必须销毁）以及供应商扣款追偿与客服赔付的全链路批次追溯服务。
+
+
+    认证：先调用 POST /api/v1/auth/login 获取 Bearer Token，随后在请求头携带
+    `Authorization: Bearer <token>`。角色：admin / qa / production / warehouse / sales / finance / regulator。
+servers:
+  - url: http://localhost:8080
+    description: 本地
+tags:
+  - name: 认证
+  - name: 主数据
+  - name: 采购入库与温控
+  - name: 生产解冻与加工
+  - name: 留样与监管抽样
+  - name: 冷库库存与盘点
+  - name: 发货订单与渠道反馈
+  - name: 质量事件
+  - name: 召回
+  - name: 退货处置
+  - name: 财务追偿与赔付
+  - name: 谱系追溯与看板
+security:
+  - bearerAuth: []
+paths:
+  /healthz:
+    get:
+      tags: [认证]
+      summary: 健康检查（PG/Redis）
+      security: []
+      responses:
+        '200': { description: 正常 }
+        '503': { description: 依赖不可用 }
+  /api/v1/auth/login:
+    post:
+      tags: [认证]
+      summary: 登录获取令牌
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, example: admin }
+                password: { type: string, example: admin123 }
+      responses:
+        '200':
+          description: 登录成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token: { type: string }
+                  expires_in: { type: integer, example: 43200 }
+                  user: { $ref: '#/components/schemas/User' }
+        '401': { description: 用户名或密码错误 }
+
+  /api/v1/suppliers:
+    get:
+      tags: [主数据]
+      summary: 供应商列表
+      responses:
+        '200': { description: OK }
+    post:
+      tags: [主数据]
+      summary: 新建供应商（admin）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string, example: SUP003 }
+                name: { type: string, example: 北方渔贸 }
+                contact_person: { type: string }
+                phone: { type: string }
+                qualification_no: { type: string }
+      responses:
+        '201': { description: 已创建 }
+        '409': { description: 编码冲突 }
+  /api/v1/channels:
+    get:
+      tags: [主数据]
+      summary: 渠道列表（RESTAURANT/RETAIL/ECOMMERCE/LIVESTREAM/DISTRIBUTOR）
+      responses: { '200': { description: OK } }
+    post:
+      tags: [主数据]
+      summary: 新建渠道（admin）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, type]
+              properties:
+                code: { type: string, example: CH005 }
+                name: { type: string }
+                type: { type: string, enum: [RESTAURANT, RETAIL, ECOMMERCE, LIVESTREAM, DISTRIBUTOR] }
+      responses: { '201': { description: 已创建 } }
+  /api/v1/production-lines:
+    get:
+      tags: [主数据]
+      summary: 生产线列表（支持多线并行）
+      responses: { '200': { description: OK } }
+    post:
+      tags: [主数据]
+      summary: 新建生产线（admin）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string, example: L4 }
+                name: { type: string }
+                workshop: { type: string }
+      responses: { '201': { description: 已创建 } }
+  /api/v1/storage-locations:
+    get:
+      tags: [主数据]
+      summary: 库位列表（RAW_FROZEN/THAW_ROOM/FINISHED_COLD/QUARANTINE/DESTROY）
+      responses: { '200': { description: OK } }
+    post:
+      tags: [主数据]
+      summary: 新建库位（admin/warehouse）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name, zone]
+              properties:
+                code: { type: string, example: CP-B-03 }
+                name: { type: string }
+                zone: { type: string, enum: [RAW_FROZEN, THAW_ROOM, FINISHED_COLD, QUARANTINE, DESTROY] }
+                capacity_kg: { type: number }
+      responses: { '201': { description: 已创建 } }
+  /api/v1/seasoning-batches:
+    get:
+      tags: [主数据]
+      summary: 调味料批次列表
+      responses: { '200': { description: OK } }
+    post:
+      tags: [主数据]
+      summary: 新建调味料批次
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [batch_no, name]
+              properties:
+                batch_no: { type: string, example: SEA-261001 }
+                name: { type: string }
+                supplier_id: { type: integer }
+                production_date: { type: string, example: '2026-10-01' }
+                expiry_date: { type: string, example: '2027-04-01' }
+      responses: { '201': { description: 已创建 } }
+  /api/v1/packaging-specs:
+    get:
+      tags: [主数据]
+      summary: 包装规格列表（含渠道定制包装）
+      responses: { '200': { description: OK } }
+    post:
+      tags: [主数据]
+      summary: 新建包装规格（admin/sales）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, name]
+              properties:
+                code: { type: string, example: PKG-NEW }
+                name: { type: string }
+                channel_id: { type: integer, description: 空表示通用包装 }
+                spec_detail: { type: string }
+      responses: { '201': { description: 已创建 } }
+  /api/v1/config:
+    get:
+      tags: [主数据]
+      summary: 业务规则配置（温度限值/解冻时长/销毁成本）
+      responses: { '200': { description: OK } }
+    put:
+      tags: [主数据]
+      summary: 更新规则配置（admin/qa）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: { type: string }
+              example: { thaw_max_minutes: '300', inbound_temp_limit_c: '-18' }
+      responses: { '200': { description: 已更新 } }
+
+  /api/v1/raw-batches:
+    get:
+      tags: [采购入库与温控]
+      summary: 原料批次列表
+      parameters:
+        - { in: query, name: batchNo, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [FROZEN_IN, ON_HOLD, RELEASED, CONSUMED, CLOSED] } }
+        - { in: query, name: supplierId, schema: { type: integer } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [采购入库与温控]
+      summary: 采购入库（记录供应商/捕捞生产日期/入库温度/检疫证明/箱号/库位；温度超标自动冻结并开质量事件）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RawBatchCreate' }
+      responses:
+        '201':
+          description: 已入库
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  batch_no: { type: string }
+                  status: { type: string, example: FROZEN_IN }
+                  temp_violation: { type: boolean }
+                  quality_event_no: { type: string, nullable: true }
+  /api/v1/raw-batches/{batchNo}:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    get:
+      tags: [采购入库与温控]
+      summary: 原料批次详情（箱号/库位/温控记录）
+      responses: { '200': { description: OK }, '404': { description: 不存在 } }
+  /api/v1/raw-batches/{batchNo}/boxes:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    post:
+      tags: [采购入库与温控]
+      summary: 补录原料箱号
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                boxes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      box_no: { type: string }
+                      weight_kg: { type: number }
+                      location_code: { type: string }
+      responses: { '201': { description: 已录入 } }
+  /api/v1/raw-batches/{batchNo}/temp-logs:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    post:
+      tags: [采购入库与温控]
+      summary: 仓储巡检温控（超标每次都开质量事件并冻结批次）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [temp_c, recorded_by]
+              properties:
+                phase: { type: string, default: STORAGE }
+                temp_c: { type: number, example: -14 }
+                recorded_by: { type: string }
+                box_no: { type: string }
+                note: { type: string }
+      responses: { '201': { description: 已记录 } }
+
+  /api/v1/production-plans:
+    get:
+      tags: [生产解冻与加工]
+      summary: 生产计划列表
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [生产解冻与加工]
+      summary: 下发生产计划（可指定预期调味料批次）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [line_code, product_code, product_name]
+              properties:
+                line_code: { type: string, example: L1 }
+                product_code: { type: string }
+                product_name: { type: string }
+                planned_qty_kg: { type: number }
+                expected_seasoning_batch_no: { type: string }
+      responses: { '201': { description: 已下发 } }
+  /api/v1/production-plans/{planNo}/start:
+    parameters:
+      - { in: path, name: planNo, required: true, schema: { type: string } }
+    post:
+      tags: [生产解冻与加工]
+      summary: 开工（不同产线可并行；同产线同时仅一个在制）
+      responses: { '200': { description: 已开工 }, '409': { description: 冲突 } }
+  /api/v1/production-plans/{planNo}/complete:
+    parameters:
+      - { in: path, name: planNo, required: true, schema: { type: string } }
+    post:
+      tags: [生产解冻与加工]
+      summary: 计划完工，生成成品批次/箱号/原料谱系/留样并转入成品冷库
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cold_location_code: { type: string, example: CP-B-01 }
+                boxes:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      box_no: { type: string }
+                      weight_kg: { type: number }
+                      packaging_spec_code: { type: string }
+      responses: { '201': { description: 成品批次已生成 } }
+  /api/v1/thaw-records:
+    post:
+      tags: [生产解冻与加工]
+      summary: 解冻开始（解冻间/用水批次/操作人；ON_HOLD 原料禁止解冻）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_no, raw_batch_no, water_batch_no, operator]
+              properties:
+                plan_no: { type: string }
+                raw_batch_no: { type: string }
+                water_batch_no: { type: string }
+                operator: { type: string }
+                raw_weight_kg: { type: number }
+                start_at: { type: string, description: RFC3339，缺省当前时间 }
+                note: { type: string }
+      responses:
+        '201': { description: 解冻已开始 }
+        '409': { description: 原料冻结/计划未开工等冲突 }
+  /api/v1/thaw-records/{id}/finish:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    post:
+      tags: [生产解冻与加工]
+      summary: 解冻结束（中心温度+时长；超时或中心温度超标自动开质量事件）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                end_at: { type: string }
+                center_temp_c: { type: number, example: 5 }
+                note: { type: string }
+      responses: { '200': { description: OK } }
+  /api/v1/processing-records:
+    post:
+      tags: [生产解冻与加工]
+      summary: >
+        加工工序记录。stage 取值 CLEAN/CUT/SEASON/WEIGH/PACK/METAL_CHECK/SAMPLE/COLD_IN。
+        SEASON 实际调味料批次与计划不一致自动开 SEASONING_MISMATCH；METAL_CHECK 报警开
+        METAL_ALARM；PACK 包装漏气开 PACKAGE_LEAK。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_no, stage, operator]
+              properties:
+                plan_no: { type: string }
+                stage: { type: string, enum: [CLEAN, CUT, SEASON, WEIGH, PACK, METAL_CHECK, SAMPLE, COLD_IN] }
+                operator: { type: string }
+                seasoning_batch_no: { type: string }
+                weight_kg: { type: number }
+                packaging_spec_code: { type: string }
+                package_leak: { type: boolean }
+                metal_alarm: { type: boolean }
+                sample_qty_g: { type: integer }
+                result: { type: string, enum: [OK, NG] }
+                note: { type: string }
+      responses: { '201': { description: 已记录 } }
+  /api/v1/product-batches:
+    get:
+      tags: [生产解冻与加工]
+      summary: 成品批次列表
+      parameters:
+        - { in: query, name: batchNo, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string } }
+      responses: { '200': { description: OK } }
+  /api/v1/product-batches/{batchNo}:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    get:
+      tags: [生产解冻与加工]
+      summary: 成品批次详情（箱号/原料谱系/留样）
+      responses: { '200': { description: OK } }
+
+  /api/v1/product-batches/{batchNo}/samples:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    get:
+      tags: [留样与监管抽样]
+      summary: 留样列表
+      responses: { '200': { description: OK } }
+    post:
+      tags: [留样与监管抽样]
+      summary: 登记留样（完工时也会按 SAMPLE 工序自动生成）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [qty_g, retained_by]
+              properties:
+                box_no: { type: string }
+                qty_g: { type: integer }
+                storage_location: { type: string }
+                retained_by: { type: string }
+      responses: { '201': { description: 已留样 } }
+  /api/v1/samples/{id}/lab-result:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    post:
+      tags: [留样与监管抽样]
+      summary: 留样实验室结论（FAIL 自动开质量事件）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lab_result]
+              properties:
+                lab_result: { type: string, enum: [PASS, FAIL] }
+                lab_report_no: { type: string }
+                conclusion: { type: string }
+      responses: { '200': { description: OK } }
+  /api/v1/regulator-samplings:
+    get:
+      tags: [留样与监管抽样]
+      summary: 监管抽样列表
+      parameters:
+        - { in: query, name: result, schema: { type: string, enum: [PENDING, PASS, FAIL] } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [留样与监管抽样]
+      summary: 监管抽样登记
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [regulator_name, batch_no, sample_qty_g, sampler]
+              properties:
+                regulator_name: { type: string, example: 市市场监管局 }
+                batch_no: { type: string }
+                box_no: { type: string }
+                sample_qty_g: { type: integer }
+                purpose: { type: string }
+                sampler: { type: string }
+      responses: { '201': { description: 已登记 } }
+  /api/v1/regulator-samplings/{id}/result:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    post:
+      tags: [留样与监管抽样]
+      summary: 监管抽检结论（FAIL 自动生成已确认的 REGULATOR_RECALL 质量事件）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: { type: string, enum: [PASS, FAIL] }
+                lab_report_no: { type: string }
+                note: { type: string }
+      responses: { '200': { description: OK } }
+
+  /api/v1/stock/boxes:
+    get:
+      tags: [冷库库存与盘点]
+      summary: 库存箱查询（kind=RAW/PRODUCT，可按库位/状态过滤）
+      parameters:
+        - { in: query, name: kind, schema: { type: string, enum: [RAW, PRODUCT] } }
+        - { in: query, name: location_code, schema: { type: string } }
+        - { in: query, name: zone, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string } }
+      responses: { '200': { description: OK } }
+  /api/v1/stock/summary:
+    get:
+      tags: [冷库库存与盘点]
+      summary: 库存汇总（按库位/状态统计箱数与重量）
+      responses: { '200': { description: OK } }
+  /api/v1/stocktakes:
+    get:
+      tags: [冷库库存与盘点]
+      summary: 盘点单列表
+      responses: { '200': { description: OK } }
+    post:
+      tags: [冷库库存与盘点]
+      summary: 创建盘点单（默认按系统账面生成待盘清单，可携带实盘数据）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [location_code, counted_by]
+              properties:
+                location_code: { type: string }
+                counted_by: { type: string }
+                note: { type: string }
+                actuals:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      box_kind: { type: string, enum: [RAW, PRODUCT] }
+                      box_no: { type: string }
+                      actual_kg: { type: number }
+                      found: { type: boolean }
+                      note: { type: string }
+      responses: { '201': { description: 已创建 } }
+  /api/v1/stocktakes/{takeNo}/confirm:
+    parameters:
+      - { in: path, name: takeNo, required: true, schema: { type: string } }
+    post:
+      tags: [冷库库存与盘点]
+      summary: 确认盘点（账实差异以实盘重量回写，盘亏箱保留记录）
+      responses: { '200': { description: 已确认 } }
+
+  /api/v1/shipments:
+    get:
+      tags: [发货订单与渠道反馈]
+      summary: 发货单列表
+      parameters:
+        - { in: query, name: batchNo, schema: { type: string } }
+        - { in: query, name: channelCode, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [发货订单与渠道反馈]
+      summary: 渠道发货（可整单改贴渠道定制包装；召回冻结批次禁止发货）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel_code, product_batch_no, box_nos]
+              properties:
+                channel_code: { type: string, example: CH001 }
+                product_batch_no: { type: string }
+                box_nos: { type: array, items: { type: string } }
+                packaging_spec_code: { type: string }
+                vehicle_no: { type: string }
+                operator: { type: string }
+      responses: { '201': { description: 已发货 }, '409': { description: 批次冻结/箱态冲突 } }
+  /api/v1/sales-orders:
+    get:
+      tags: [发货订单与渠道反馈]
+      summary: 已售订单列表（召回时据此精准定位）
+      parameters:
+        - { in: query, name: orderNo, schema: { type: string } }
+        - { in: query, name: channelCode, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [发货订单与渠道反馈]
+      summary: 登记已售订单（精确到箱）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel_code, items]
+              properties:
+                channel_code: { type: string }
+                ship_no: { type: string }
+                customer_ref: { type: string }
+                amount_cny: { type: number }
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      box_no: { type: string }
+                      qty: { type: integer }
+      responses: { '201': { description: 已登记 } }
+  /api/v1/feedbacks:
+    get:
+      tags: [发货订单与渠道反馈]
+      summary: 渠道反馈列表
+      parameters:
+        - { in: query, name: type, schema: { type: string } }
+        - { in: query, name: source, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [发货订单与渠道反馈]
+      summary: >
+        渠道/直播间/监管/客服反馈。OFF_ODOR 异味与直播间 BATCH_RETURN 集中退货
+        自动生成质量事件。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel_code, source, type, description]
+              properties:
+                channel_code: { type: string }
+                order_no: { type: string }
+                product_batch_no: { type: string }
+                box_no: { type: string }
+                source: { type: string, enum: [CHANNEL, LIVESTREAM, REGULATOR, CUSTOMER_SERVICE] }
+                type: { type: string, enum: [OFF_ODOR, FOREIGN_OBJECT, SPOILAGE, PACKAGE_DAMAGE, BATCH_RETURN, OTHER] }
+                description: { type: string }
+      responses: { '201': { description: 已受理 } }
+
+  /api/v1/quality-events:
+    get:
+      tags: [质量事件]
+      summary: 质量事件列表
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [OPEN, CONFIRMED, DISMISSED, CLOSED] } }
+        - { in: query, name: type, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [质量事件]
+      summary: 手工开具质量事件
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [type, description]
+              properties:
+                type: { type: string, enum: [TEMP_EXCEEDED, THAW_TIMEOUT, SEASONING_MISMATCH, METAL_ALARM, PACKAGE_LEAK, OFF_ODOR, LIVESTREAM_BATCH_RETURN, REGULATOR_RECALL, OTHER] }
+                severity: { type: string, enum: [LOW, MEDIUM, HIGH] }
+                raw_batch_no: { type: string }
+                product_batch_no: { type: string }
+                box_no: { type: string }
+                feedback_id: { type: integer }
+                description: { type: string }
+      responses: { '201': { description: 已开具 } }
+  /api/v1/quality-events/{eventNo}/confirm:
+    parameters:
+      - { in: path, name: eventNo, required: true, schema: { type: string } }
+    post:
+      tags: [质量事件]
+      summary: 品控确认/驳回（驳回解除原料冻结）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirm: { type: boolean }
+                conclusion: { type: string }
+      responses: { '200': { description: OK } }
+
+  /api/v1/recalls:
+    get:
+      tags: [召回]
+      summary: 召回单列表
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [DRAFT, RELEASED, CLOSED] } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [召回]
+      summary: >
+        创建召回（DRAFT）。可通过 product_batch_nos 指定成品批次、raw_batch_no 沿谱系
+        扩散、trigger_event_no 用质量事件自动圈定。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason_type, description]
+              properties:
+                reason_type: { type: string, enum: [TEMP_EXCEEDED, THAW_TIMEOUT, SEASONING_MISMATCH, METAL_ALARM, PACKAGE_LEAK, OFF_ODOR, LIVESTREAM_BATCH_RETURN, REGULATOR_RECALL, OTHER] }
+                level: { type: string, enum: [CLASS_I, CLASS_II, CLASS_III] }
+                trigger_event_no: { type: string }
+                regulator_ref_no: { type: string }
+                product_batch_nos: { type: array, items: { type: string } }
+                raw_batch_no: { type: string }
+                action: { type: string, enum: [STOP_SALE_ONLY, STOP_SALE_RETURN, DESTROY] }
+                description: { type: string }
+      responses: { '201': { description: 已创建（草稿） } }
+  /api/v1/recalls/{recallNo}:
+    parameters:
+      - { in: path, name: recallNo, required: true, schema: { type: string } }
+    get:
+      tags: [召回]
+      summary: 召回影响面（每个成品批次的库存箱/已发渠道/已售订单到箱/留样结论/上游原料/退货）
+      responses: { '200': { description: OK } }
+  /api/v1/recalls/{recallNo}/release:
+    parameters:
+      - { in: path, name: recallNo, required: true, schema: { type: string } }
+    post:
+      tags: [召回]
+      summary: 发布召回（冻结在库、锁定发货单与已售订单，自动生成停售/退货/监管/追溯材料）
+      responses: { '200': { description: 已发布 } }
+  /api/v1/recalls/{recallNo}/documents:
+    parameters:
+      - { in: path, name: recallNo, required: true, schema: { type: string } }
+    get:
+      tags: [召回]
+      summary: 召回材料列表
+      responses: { '200': { description: OK } }
+  /api/v1/recalls/{recallNo}/documents/{docType}:
+    parameters:
+      - { in: path, name: recallNo, required: true, schema: { type: string } }
+      - { in: path, name: docType, required: true, schema: { type: string, enum: [STOP_SALE_NOTICE, RETURN_NOTICE, COMPENSATION_PLAN, SUPPLIER_CLAIM, REGULATOR_REPORT, TRACE_REPORT] } }
+    post:
+      tags: [召回]
+      summary: 手工生成召回材料（停售/退货/赔偿方案/供应商追责函/监管备案/追溯报告）
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target: { type: string }
+                content: { type: string }
+      responses: { '201': { description: 已生成 }, '409': { description: 同对象同类材料已存在 } }
+
+  /api/v1/returns:
+    get:
+      tags: [退货处置]
+      summary: 退货回厂记录
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: source, schema: { type: string } }
+        - { in: query, name: recallNo, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [退货处置]
+      summary: 退货回厂登记（进入隔离待检库，待分级）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [box_no, received_by]
+              properties:
+                recall_no: { type: string }
+                box_no: { type: string }
+                source: { type: string, enum: [CHANNEL_RETURN, LIVESTREAM_RETURN, WAREHOUSE_RECALL] }
+                received_by: { type: string }
+      responses: { '201': { description: 已回厂 } }
+  /api/v1/returns/summary:
+    get:
+      tags: [退货处置]
+      summary: 退货三态处置汇总 + 库存状态一致性核对
+      responses: { '200': { description: OK } }
+  /api/v1/returns/{id}/decision:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    post:
+      tags: [退货处置]
+      summary: >
+        分级处置：RETEST 可复检（进 RETESTING）、REWORK 可返工（首次进 REWORKING，
+        再次调用表示返工完成回库为 REWORKED）、DESTROY 必须销毁。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [RETEST, REWORK, DESTROY] }
+                note: { type: string }
+      responses: { '200': { description: OK } }
+  /api/v1/returns/{id}/retest-result:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: integer } }
+    post:
+      tags: [退货处置]
+      summary: 复检结论（PASS 回成品冷库；FAIL 强制销毁，防止库存状态失真）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result: { type: string, enum: [PASS, FAIL] }
+                note: { type: string }
+      responses: { '200': { description: OK } }
+
+  /api/v1/supplier-claims:
+    get:
+      tags: [财务追偿与赔付]
+      summary: 供应商索赔单列表
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: supplierCode, schema: { type: string } }
+        - { in: query, name: recallNo, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [财务追偿与赔付]
+      summary: 发起供应商索赔追偿（可关联原料批次与召回单）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [supplier_code, reason, claim_amount]
+              properties:
+                supplier_code: { type: string }
+                recall_no: { type: string }
+                raw_batch_no: { type: string }
+                reason: { type: string }
+                claim_amount: { type: number }
+      responses: { '201': { description: 已发起 } }
+  /api/v1/supplier-claims/{claimNo}/deduct:
+    parameters:
+      - { in: path, name: claimNo, required: true, schema: { type: string } }
+    post:
+      tags: [财务追偿与赔付]
+      summary: 财务执行供应商扣款（可标记黑名单/不合格）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deduct_amount: { type: number, description: 缺省按索赔全额 }
+                payment_ref: { type: string }
+                blacklist_supplier: { type: boolean }
+      responses: { '200': { description: 已扣款 } }
+  /api/v1/compensations:
+    get:
+      tags: [财务追偿与赔付]
+      summary: 客服赔付列表
+      parameters:
+        - { in: query, name: status, schema: { type: string } }
+        - { in: query, name: recallNo, schema: { type: string } }
+      responses: { '200': { description: OK } }
+    post:
+      tags: [财务追偿与赔付]
+      summary: 登记客服赔付方案（按订单）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [order_no, amount_cny]
+              properties:
+                recall_no: { type: string }
+                order_no: { type: string }
+                amount_cny: { type: number }
+                reason: { type: string }
+      responses: { '201': { description: 已登记 } }
+  /api/v1/compensations/{compNo}/pay:
+    parameters:
+      - { in: path, name: compNo, required: true, schema: { type: string } }
+    post:
+      tags: [财务追偿与赔付]
+      summary: 赔付支付
+      responses: { '200': { description: 已支付 } }
+  /api/v1/finance/recall-cost/{recallNo}:
+    parameters:
+      - { in: path, name: recallNo, required: true, schema: { type: string } }
+    get:
+      tags: [财务追偿与赔付]
+      summary: 召回成本汇总（客户赔付/供应商扣款回收/销毁成本/净损失）
+      responses: { '200': { description: OK } }
+
+  /api/v1/trace/raw/{batchNo}:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    get:
+      tags: [谱系追溯与看板]
+      summary: 原料批次正向追溯（进入哪些成品/发往哪些渠道/留样是否合格/质量事件）
+      responses: { '200': { description: OK } }
+  /api/v1/trace/product/{batchNo}:
+    parameters:
+      - { in: path, name: batchNo, required: true, schema: { type: string } }
+    get:
+      tags: [谱系追溯与看板]
+      summary: 成品批次全链路追溯（原料/工序/留样/发货订单/反馈/退货）
+      responses: { '200': { description: OK } }
+  /api/v1/dashboard:
+    get:
+      tags: [谱系追溯与看板]
+      summary: 管理者看板（冻结批次/未决事件/召回/待处置退货/销毁等）
+      responses: { '200': { description: OK } }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        username: { type: string }
+        role: { type: string, enum: [admin, qa, production, warehouse, sales, finance, regulator] }
+        full_name: { type: string }
+    RawBatchCreate:
+      type: object
+      required: [supplier_id, material_type, catch_or_production_date, inbound_temp_c, quarantine_cert_no, inspector]
+      properties:
+        supplier_id: { type: integer, example: 1 }
+        material_type: { type: string, enum: [SHRIMP, SCALLOP, SQUID, FISH_FILLET] }
+        catch_or_production_date: { type: string, example: '2026-09-20' }
+        inbound_temp_c: { type: number, example: -20 }
+        quarantine_cert_no: { type: string }
+        inspector: { type: string }
+        note: { type: string }
+        boxes:
+          type: array
+          items:
+            type: object
+            properties:
+              box_no: { type: string }
+              weight_kg: { type: number }
+              location_code: { type: string }

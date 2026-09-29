@@ -1,0 +1,36 @@
+# 编译产物
+/seafood-trace
+*.exe *.test *.out
+# 日志
+*.log
+# 本地环境
+.env
+# Generated/runtime files excluded from GSB delivery
+node_modules/
+**/node_modules/
+frontend/dist/
+**/dist/
+**/build/
+coverage/
+!.env.example
+.claude/
+.codex/
+traces/
+recordings/
+screenshots/
+test-results/
+tmp/
+temp/
+*.jsonl
+*.webm
+*.mp4
+*.har
+*.sqlite
+*.db
+*screenshot*
+*screen-capture*
+*recording*
+*trace*
+*debug*
+*temp*
+*tmp*

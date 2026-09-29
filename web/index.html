@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>海鲜预制菜批次解冻加工与召回服务 - API 文档</title>
+  <link rel="stylesheet" href="./swagger-ui/swagger-ui.css" />
+  <style>
+    body { margin: 0; }
+    .topbar { background:#0b3d5c; color:#fff; padding:10px 20px; font-family:sans-serif; font-size:14px;}
+    .topbar a { color:#9fd3ff; }
+  </style>
+</head>
+<body>
+  <div class="topbar">海鲜预制菜工厂 · 批次解冻加工与召回服务 — OpenAPI 文档（<a href="/openapi.yaml">openapi.yaml</a>）</div>
+  <div id="swagger-ui"></div>
+  <script src="./swagger-ui/swagger-ui-bundle.js" charset="UTF-8"></script>
+  <script>
+    window.addEventListener('load', () => {
+      window.ui = SwaggerUIBundle({
+        url: '/openapi.yaml',
+        dom_id: '#swagger-ui',
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: 'BaseLayout',
+        deepLinking: true
+      });
+    });
+  </script>
+</body>
+</html>
