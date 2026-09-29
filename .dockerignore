@@ -1,0 +1,6 @@
+# 本地构建产物
+/seafood-app
+*.log
+.git
+.gitignore
+*.md
